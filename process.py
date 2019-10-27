@@ -2,6 +2,7 @@ import pickle
 import numpy as np 
 import sys 
 import os
+from keras.preprocessing.sequence import pad_sequences
 def get_ui():
 	fr = open('ratings_data.txt')
 	u_dict = {}
@@ -46,10 +47,10 @@ def get_ui():
 				flag = 0
 
 
-	user2idx = {user:i for i,user in enumerate(u_dict.keys())}
-	item2idx = {item:i for i,item in enumerate(i_dict.keys())}
+	user2idx = {user:i+1 for i,user in enumerate(u_dict.keys())}
+	item2idx = {item:i+1 for i,item in enumerate(i_dict.keys())}
 
-	uir = []
+	uir = [[0,0,0]]
 	for record in uirs:
 		user = record[0]
 		item = record[1]
@@ -58,10 +59,19 @@ def get_ui():
 			continue
 		uir.append([user2idx[user], item2idx[item], rate])
 
+	if not os.path.exists('pmtt.npy'):
+		pmtt = np.random.permutation(len(uir)-1)+1
+		pmtt = np.array([0]+list(pmtt))
+		np.save('pmtt', pmtt)
+
+	else:
+		pmtt = np.load('pmtt.npy')
+
+	uir = np.array(uir)[pmtt]
 	data = {}
 	data['uir'] = uir 
-	data['num_user'] = len(user2idx)
-	data['num_item'] = len(item2idx)
+	data['num_user'] = len(user2idx)+1
+	data['num_item'] = len(item2idx)+1
 
 
 	print(len(uir), len(user2idx), len(item2idx))
@@ -102,18 +112,31 @@ def get_sim_neighbors(mat):
 
 		# res = sorted(res)[::-1]
 
-		nz_len = len(np.where(res!=0)[0])
+		nz_index = np.where(res!=0)[0]
 
-		res = np.argsort(res)[::-1]
-		sim_neighbors.append(res[:nz_len])
+		# res = res[nz_index]
+		# sort_index = np.argsort(res)[::-1]
+		# nz_index = nz_index[sort_index]
+
+
+
+
+
+		# sim_neighbors.append(res[:nz_len])
+		sim_neighbors.append(nz_index)
 
 
 		# sim_neighbors.append(np.where(res!=0)[0])
 		# sim_neighbors.append(res)
 	# sim_neighbors = np.array(sim_neighbors)
+	lens = [len(item) for item in sim_neighbors]
+	print('sim 90 percentile: ', np.percentile(lens,90))
+	maxlen = int(np.percentile(lens, 90))
+	sim_neighbors = pad_sequences(sim_neighbors, maxlen)
+
 	return sim_neighbors
 
-def get_pair_neighbors(uir, sim_neighbors):
+def get_pair_neighbors(uir, u_neighbors):
 	uir = np.array(uir)
 
 	udat = uir[:,0]
@@ -126,26 +149,37 @@ def get_pair_neighbors(uir, sim_neighbors):
 		# r1,r2,r = record
 		sys.stdout.write('\r{}/{}'.format(i,length))
 		sys.stdout.flush()
-		item = idat[i]
+		# item = idat[i]
 
-		index = np.where(idat == item)[0]
+		index = np.where(idat == idat[i])[0]
+		# print(index)
 
 		user = udat[i]
 		users = udat[index]
 
-		neighbors = sim_neighbors[user]
+		sims = u_neighbors[user]
 
-		sim_index = neighbors[users]
+		temp = []
 
 
-		sort_index = np.argsort(sim_index)[::-1] # sorted by similarity  index->user->sim_index
+		for user,idx in zip(users,index):
+			if user in sims:
+				temp.append(idx)
 
-		if len(sort_index)<pad_num:
-			temp = list(index[sort_index])+[i]*(pad_num-len(sort_index))
-			pair_neighbors.append(temp)
 
-		else:
-			pair_neighbors.append(index[sort_index][:pad_num])
+
+
+
+		pair_neighbors.append(temp)
+
+		if i==10:
+			break
+
+	lens = [len(item) for item in pair_neighbors]
+	maxlen = np.round(np.percentile(lens,90))
+
+	print('\n',pair_neighbors[-1])
+	pair_neighbors = pad_sequences(pair_neighbors, maxlen = int(maxlen))
 
 	return pair_neighbors
 
@@ -158,11 +192,15 @@ def get_pair_neighbors(uir, sim_neighbors):
 
 
 def get_neighbors():
+	if not os.path.exists('temp_data.pkl'):
+		get_ui()
+	
 	data = pickle.load(open('temp_data.pkl', 'rb'))
 
 	num_user = data['num_user']
 	num_item = data['num_item']
 	uir = data['uir']
+	print(uir.shape)
 
 	mat = get_mat(data['uir'], num_user, num_item)
 
@@ -171,8 +209,10 @@ def get_neighbors():
 
 		u_neighbors = get_sim_neighbors(mat)
 		pickle.dump(u_neighbors, open('u_neighbors.pkl','wb'))
+		# np.savetxt('u_neighbors.txt', u_neighbors, fmt='%d')
 	else:
-		u_neighbors = pickle.load(open('u_neighbors.pkl', 'wb'))
+		u_neighbors = pickle.load(open('u_neighbors.pkl', 'rb'))
+		# u_neighbors = np.genfromtxt('u_neighbors.txt', dtype=int)
 
 
 	pair_neighbors = get_pair_neighbors(uir, u_neighbors)
@@ -188,5 +228,5 @@ def get_neighbors():
 
 
 if __name__ == '__main__':
-	get_ui()
+	# get_ui()
 	get_neighbors()
